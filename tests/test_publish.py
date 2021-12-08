@@ -11,7 +11,9 @@ def test_publish(caplog, client):
     topic = "test_publish"
     payload = time_ns()
 
-    message = client.publish(topic, payload)
-    message.wait_for_communication()
+    pub_message = client.publish(topic=topic, payload=payload)
+    pub_message.wait_for_communication()
 
-    assert message.is_communicated() == True
+    assert (
+        pub_message.is_communicated() == True
+    ), "Did not receive confirmation that the message was received by broker"

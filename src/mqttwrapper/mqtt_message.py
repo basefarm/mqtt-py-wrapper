@@ -30,11 +30,18 @@ class MqttMessage:
     )
 
     def __post_init__(self):
+        # Incoming and outgoing has different parent/container
         if self.userdata and not self.subscription:
             self.userdata.add_sent_message(self)
         elif self.subscription and not self.userdata:
             self.subscription.add_message(self)
+        else:
+            raise ValueError(
+                """Exactly 1 of userdata or subscription is expected.
+                For incoming/received: subscription. For outgoing/sent: userdata."""
+            )
 
+        # Payload: Incoming will always be bytes from paho, make sure outgoing is also bytes
         payload = self.payload
         if not isinstance(payload, bytes):
             if not isinstance(payload, str):
@@ -42,6 +49,18 @@ class MqttMessage:
             payload = payload.encode("utf-8")
 
         self.payload = payload
+
+        # Make sure retained is bool and not int on received messages
+        """
+        Unlikely to matter, but if we have to receive a lot of messages this is a small optimization.
+
+        ❯ time python -c "for i in range(1000000000): bool(i)"
+        real    0m54.581s
+
+        ❯ time python -c "for i in range(1000000000): not not i"
+        real    0m28.148s
+        """
+        self.retain = not not self.retain
 
     @property
     def timestamp_ns(self):

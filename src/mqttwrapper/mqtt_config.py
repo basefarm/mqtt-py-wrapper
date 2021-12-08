@@ -30,6 +30,34 @@ def map_to_paho_protocol(protocol: str) -> int:
 
 @dataclass
 class MqttConfig:
+    """Configuration for mqtt client
+
+    host: str
+    port: int
+    username: str = None
+    password: str = None
+
+        transport
+            set to “websockets” to send MQTT over WebSockets. Leave at the default of “tcp” to use raw TCP.
+        protocol
+            the version of the MQTT protocol to use for this client. Can be either MQTTv31, MQTTv311 or MQTTv5
+        client_id
+            the unique client id string used when connecting to the broker. If client_id is zero length or None, then one will be randomly generated. In this case the clean_session parameter must be True.
+
+    tls: dict = None
+
+        clean_session
+            a boolean that determines the client type. If True, the broker will remove all information about this client when it disconnects. If False, the client is a durable client and subscription information and queued messages will be retained when the client disconnects.
+            Note that a client will never discard its own outgoing messages on disconnect. Calling connect() or reconnect() will cause the messages to be resent. Use reinitialise() to reset a client to its original state.
+
+    keepalive: int = 60
+    bind_address: str = ""
+    log: logging.Logger = logging.getLogger("Config.INITIALIZING")
+    save_sent_messages: bool = False
+
+    Returns:
+        MqttConfig: configuration object ment to be used by MqttClient
+    """
 
     host: str
     port: int
@@ -43,7 +71,7 @@ class MqttConfig:
     client_id: str = None
     _client_id: str = field(init=False, repr=False)
 
-    tls: bool = False
+    tls: dict = None
     clean_session: bool = True
     keepalive: int = 60
     bind_address: str = ""
@@ -127,3 +155,34 @@ class MqttConfig:
                 "bind_address": self.bind_address,
             },
         )
+
+@dataclass
+class MqttTls:
+    
+    ca_certs
+        a string path to the Certificate Authority certificate files that are to be treated as trusted by this client. If this is the only option given then the client will operate in a similar manner to a web browser. That is to say it will require the broker to have a certificate signed by the Certificate Authorities in ca_certs and will communicate using TLS v1.2, but will not attempt any form of authentication. This provides basic network encryption but may not be sufficient depending on how the broker is configured. By default, on Python 2.7.9+ or 3.4+, the default certification authority of the system is used. On older Python version this parameter is mandatory.
+    certfile, keyfile
+        strings pointing to the PEM encoded client certificate and private keys respectively. If these arguments are not None then they will be used as client information for TLS based authentication. Support for this feature is broker dependent. Note that if either of these files in encrypted and needs a password to decrypt it, Python will ask for the password at the command line. It is not currently possible to define a callback to provide the password.
+    cert_reqs
+        defines the certificate requirements that the client imposes on the broker. By default this is ssl.CERT_REQUIRED, which means that the broker must provide a certificate. See the ssl pydoc for more information on this parameter.
+    tls_version
+        specifies the version of the SSL/TLS protocol to be used. By default (if the python version supports it) the highest TLS version is detected. If unavailable, TLS v1.2 is used. Previous versions (all versions beginning with SSL) are possible but not recommended due to possible security problems.
+    ciphers
+        a string specifying which encryption ciphers are allowable for this connection, or None to use the defaults. See the ssl pydoc for more information.
+
+    Must be called before connect*().
+    tls_set_context()
+
+    tls_set_context(context=None)
+
+    Configure network encryption and authentication context. Enables SSL/TLS support.
+
+    context
+        an ssl.SSLContext object. By default, this is given by ssl.create_default_context(), if available (added in Python 3.4).
+
+    If you’re unsure about using this method, then either use the default context, or use the tls_set method. See the ssl module documentation section about security considerations for more information.
+
+    Must be called before connect*().
+    tls_insecure_set()
+
+    tls_insecure_set(value)

@@ -55,15 +55,51 @@ class MqttSubscription:
         return self._granted_qos
 
     def is_active(self) -> bool:
-        if self._rc == PahoClient.MQTT_ERR_SUCCESS:
+        self.log.debug(f"Paho RC: {self._rc}")
+        return self._rc == PahoClient.MQTT_ERR_SUCCESS
+
+    def wait_for_active(self, timeout: int = None):
+        """wait_for_active Block until SUBACK arrive or timeout
+
+        Args:
+            timeout (int, optional): Max seconds to wait. Defaults to None, blocking forever
+
+        Returns:
+            bool: True if a SUBACK arrived before timeout
+        """
+
+        if self.is_active():
             return True
 
-        return False
+        if not self.activate():
+
+            timeout_time = None if timeout is None else time.time() + timeout
+            timeout_sleep = None if timeout is None else min(1, timeout / 10.0)
+
+            def timed_out():
+                return False if timeout is None else time.time() > timeout_time
+
+            while not self.is_active() and not timed_out():
+                time.sleep(timeout_sleep)
+                self.log.info(
+                    "Waiting for subscription, {0:.2f}/{1:.2f} seconds elapsed.".format(
+                        time.time() - (timeout_time - timeout), timeout
+                    )
+                )
+
+        return self.is_active()
 
     def activate(self):
+        self.log.info(f"Activating subscription")
         paho_client = self.userdata.client.get_paho()
 
         self._rc, self._mid = paho_client.subscribe(self.topic, self.qos)
+
+        return self._rc == PahoClient.MQTT_ERR_SUCCESS
+
+    def deactivate(self, rc):
+        self._rc = PahoClient.MQTT_ERR_CONN_LOST
+        self._mid = None
 
     def add_message(self, message: MqttMessage):
         self._total_message_count += 1
@@ -88,6 +124,11 @@ class MqttSubscription:
 
         while total_message_count == self._total_message_count and not timed_out():
             time.sleep(timeout_sleep)
+            self.log.info(
+                "Waiting for message, {0:.2f}/{1:.2f} seconds elapsed.".format(
+                    time.time() - (timeout_time - timeout), timeout
+                )
+            )
 
         return True if total_message_count != self._total_message_count else False
 

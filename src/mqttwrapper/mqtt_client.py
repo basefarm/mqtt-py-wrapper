@@ -1,8 +1,7 @@
 import logging
-from time import sleep, perf_counter
+import time
 
 import paho.mqtt.client as PahoClient
-from paho.mqtt import reasoncodes as PahoReasonCodes
 
 from .mqtt_config import MqttConfig
 from .mqtt_userdata import MqttUserdata
@@ -13,7 +12,7 @@ from .mqtt_subscription import MqttSubscription
 class MqttClient:
     def __init__(self, config: MqttConfig, log: logging.Logger = None):
 
-        self.connection_status = PahoClient.MQTT_ERR_NO_CONN
+        self._paho_rc = PahoClient.MQTT_ERR_NO_CONN
 
         # Set parameters passed in to class
         self.config = config
@@ -50,25 +49,32 @@ class MqttClient:
                 self._paho_client.unsubscribe(topic)
                 return subscription
 
-    def start(self, blocking=True, timeout=60):
-        config = self.config.paho_config_connect()
+    def start(self, blocking=True, timeout=None):
+        paho_config = self.config.paho_config_connect()
 
-        self.log.info(f"Connecting to {config[0]}")
+        self.log.info(f"Connecting to {self.config.host}:{self.config.port}")
 
-        self._paho_client.connect(*config[0], **config[1])
+        self._paho_client.connect(*paho_config[0], **paho_config[1])
         self._paho_client.loop_start()
 
-        start_time = perf_counter()
-        elapsed_time = 0
-        while (
-            blocking and not self._paho_client.is_connected() and elapsed_time < timeout
-        ):
-            sleep(0.25)
-            elapsed_time = perf_counter() - start_time
-            self.log.info(f"Waiting for connection, {elapsed_time}seconds elapsed.")
+        timeout_time = None if timeout is None else time.time() + timeout
+        timeout_sleep = None if timeout is None else min(1, timeout / 10.0)
+
+        def timed_out():
+            return False if timeout is None else time.time() > timeout_time
+
+        while blocking and not self.is_connected() and not timed_out():
+            time.sleep(timeout_sleep)
+            self.log.info(
+                "Waiting for connection, {0:.2f}/{1:.2f} seconds elapsed.".format(
+                    time.time() - (timeout_time - timeout), timeout
+                )
+            )
 
     def stop(self):
-        pass
+        self.log.info(f"Disonnecting from {self.config.host}:{self.config.port}")
+        self._paho_client.disconnect()
+        self._paho_client.loop_stop()
 
     def publish(
         self, topic: str, payload: bytes, qos: int = 1, retain: bool = False
@@ -99,23 +105,32 @@ class MqttClient:
     def _on_connect(self, paho_client, userdata, flags, rc):
         self.log.info(f"Connection code: {rc}")
 
-        self.connection_status = rc
+        self._paho_rc = rc
 
-        if self.connection_status != PahoClient.MQTT_ERR_SUCCESS:
+        if self._paho_rc != PahoClient.MQTT_ERR_SUCCESS:
             self.log.error(
-                f"Connection ERROR [{self.connection_status}]: {PahoReasonCodes(self.connection_status)}"
+                f"Connection ERROR [{self._paho_rc}]: {PahoClient.connack_string(self._paho_rc)}"
             )
             return
 
         for subscription in userdata.subscriptions:
-            result, mid = paho_client.subscribe(subscription.topic, subscription.qos)
-            subscription.mid = mid
-            subscription.result = result
+            subscription.wait_for_active()
 
     def _on_disconnect(self, paho_client, userdata, rc):
-        self.log.info("Disconnected")
-        # unsub?
-        # clean session?
+
+        self.log.info(f"Disconnected code: {rc}")
+
+        self._paho_rc = rc
+
+        for subscription in userdata.subscriptions:
+            subscription.deactivate(self._paho_rc)
+
+        if self._paho_rc != PahoClient.MQTT_ERR_SUCCESS:
+            self.log.error(
+                f"Disconnection ERROR (Unexpected) [{self._paho_rc}]: {PahoClient.connack_string(self._paho_rc)}"
+            )
+
+        return
 
     def _on_subscribe(self, paho_client, userdata, mid, granted_qos):
         self.log.info("Subscribed")

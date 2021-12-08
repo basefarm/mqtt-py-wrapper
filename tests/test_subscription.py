@@ -1,4 +1,5 @@
 from .fixtures import client
+import mqttwrapper
 
 
 def test_subscribe(caplog, client):
@@ -9,4 +10,11 @@ def test_subscribe(caplog, client):
     topic = "test_subscribe"
 
     subscription = client.subscribe(topic=topic)
-    assert subscription.is_active() == True
+
+    assert isinstance(
+        subscription, mqttwrapper.mqtt_subscription.MqttSubscription
+    ), "subscribe returned the wrong class"
+    assert (
+        subscription.wait_for_active() == True
+    ), "Did not receive SUBACK within the timeout period"
+    assert subscription.is_active() == True, "SUBACK not received"

@@ -21,7 +21,7 @@ class MqttUserdata:
 
     def subscribe(self, topic: str, qos: int = 1):
         subscription = MqttSubscription(
-            self, topic, qos, self.log.getChild(f"Subscription.{topic}")
+            userdata=self, topic=topic, qos=qos, log=self.log.getChild(f"Subscription.{topic}")
         )
         self.subscriptions.append(subscription)
 
