@@ -3,10 +3,11 @@ import time
 
 import paho.mqtt.client as PahoClient
 
-from .mqtt_config import MqttConfig
+from .mqtt_config import MqttConfig, map_to_paho_protocol
 from .mqtt_userdata import MqttUserdata
 from .mqtt_message import MqttMessage
 from .mqtt_subscription import MqttSubscription
+from .helper import wait
 
 
 class MqttClient:
@@ -16,6 +17,7 @@ class MqttClient:
 
         # Set parameters passed in to class
         self.config = config
+
         self.log = (
             log if log else logging.getLogger("Client.{}".format(self.config.client_id))
         )
@@ -24,10 +26,9 @@ class MqttClient:
         self.userdata = MqttUserdata(self, log=self.log.getChild("Userdata"))
 
         # Create and configure Paho Client
-        phao_config = self.config.phao_config_client()
-        self._paho_client = PahoClient.Client(*phao_config[0], **phao_config[1])
+        self.config._phao_initialize(self)
+
         self._paho_client.enable_logger(logger=self.log.getChild("PahoClient"))
-        self._paho_client.user_data_set(self.userdata)
 
         # Add callbacks to Paho Client
         self._paho_client.on_connect = self._on_connect
@@ -50,26 +51,34 @@ class MqttClient:
                 return subscription
 
     def start(self, blocking=True, timeout=None):
-        paho_config = self.config.paho_config_connect()
 
         self.log.info(f"Connecting to {self.config.host}:{self.config.port}")
 
-        self._paho_client.connect(*paho_config[0], **paho_config[1])
+        self.config._paho_config(self)
+
         self._paho_client.loop_start()
 
-        timeout_time = None if timeout is None else time.time() + timeout
-        timeout_sleep = None if timeout is None else min(1, timeout / 10.0)
-
-        def timed_out():
-            return False if timeout is None else time.time() > timeout_time
-
-        while blocking and not self.is_connected() and not timed_out():
-            time.sleep(timeout_sleep)
-            self.log.info(
-                "Waiting for connection, {0:.2f}/{1:.2f} seconds elapsed.".format(
-                    time.time() - (timeout_time - timeout), timeout
-                )
+        if blocking:
+            wait(
+                condition=self.is_connected,
+                timeout=timeout,
+                log=self.log,
+                reason="Waiting for conenction",
             )
+
+        # timeout_time = None if timeout is None else time.time() + timeout
+        # timeout_sleep = None if timeout is None else min(1, timeout / 100.0)
+
+        # def timed_out():
+        #     return False if timeout is None else time.time() > timeout_time
+
+        # while blocking and not self.is_connected() and not timed_out():
+        #     time.sleep(timeout_sleep)
+        #     self.log.info(
+        #         "Waiting for connection, {0:.2f}/{1:.2f} seconds elapsed.".format(
+        #             time.time() - (timeout_time - timeout), timeout
+        #         )
+        #     )
 
     def stop(self):
         self.log.info(f"Disonnecting from {self.config.host}:{self.config.port}")
@@ -102,7 +111,7 @@ class MqttClient:
     def is_connected(self):
         return self._paho_client.is_connected()
 
-    def _on_connect(self, paho_client, userdata, flags, rc):
+    def _on_connect(self, paho_client, userdata, flags, rc, properties=None):
         self.log.info(f"Connection code: {rc}")
 
         self._paho_rc = rc
@@ -116,7 +125,7 @@ class MqttClient:
         for subscription in userdata.subscriptions:
             subscription.wait_for_active()
 
-    def _on_disconnect(self, paho_client, userdata, rc):
+    def _on_disconnect(self, paho_client, userdata, rc, properties=None):
 
         self.log.info(f"Disconnected code: {rc}")
 
@@ -132,9 +141,21 @@ class MqttClient:
 
         return
 
-    def _on_subscribe(self, paho_client, userdata, mid, granted_qos):
-        self.log.info("Subscribed")
+    def _on_subscribe(self, paho_client, userdata, mid, granted_qos, properties=None):
+        self.log.info(f"Subscribed: {mid=}")
+
+        # Avoid race condition where callback triggers before subscribe call gets an RC.
+        #   This is fairly rare, seem to be around every 1/1000 time or so on local computer network
+        wait(
+            condition=lambda: userdata.get_subscription(mid=mid) is not None,
+            timeout=3,
+            log=self.log,
+            reason="Waiting for subscription",
+            resolution=100,
+        )
+
         subscription = userdata.get_subscription(mid=mid)
+
         subscription.subscribe_callback(granted_qos)
         paho_client.message_callback_add(
             subscription.topic, subscription.message_callback

@@ -8,6 +8,7 @@ from paho.mqtt.client import MQTTMessage as PahoMQTTMessage
 
 # This lib
 from .mqtt_message import MqttMessage
+from .helper import wait
 
 # Help out with cyclic import
 from typing import TYPE_CHECKING, List
@@ -19,12 +20,12 @@ if TYPE_CHECKING:
 @dataclass
 class MqttSubscription:
 
-    userdata: "MqttUserdata"
+    userdata: "MqttUserdata" = field(repr=False)
     topic: str
     qos: int = 1
     log: logging.Logger = logging.getLogger("Subscription.INITIALIZING")
 
-    messages: List["MqttMessage"] = field(default_factory=list)
+    messages: List["MqttMessage"] = field(default_factory=list, repr=False)
 
     _total_message_count: int = field(init=False, default=0)
     _rc: int = field(init=False, default=PahoClient.MQTT_ERR_NO_CONN)
@@ -73,28 +74,38 @@ class MqttSubscription:
 
         if not self.activate():
 
-            timeout_time = None if timeout is None else time.time() + timeout
-            timeout_sleep = None if timeout is None else min(1, timeout / 10.0)
+            # timeout_time = None if timeout is None else time.time() + timeout
+            # timeout_sleep = None if timeout is None else min(1, timeout / 10.0)
 
-            def timed_out():
-                return False if timeout is None else time.time() > timeout_time
+            # def timed_out():
+            #     return False if timeout is None else time.time() > timeout_time
 
-            while not self.is_active() and not timed_out():
-                time.sleep(timeout_sleep)
-                self.log.info(
-                    "Waiting for subscription, {0:.2f}/{1:.2f} seconds elapsed.".format(
-                        time.time() - (timeout_time - timeout), timeout
-                    )
-                )
+            # while not self.is_active() and not timed_out():
+            #     time.sleep(timeout_sleep)
+            #     self.log.info(
+            #         "Waiting for subscription, {0:.2f}/{1:.2f} seconds elapsed.".format(
+            #             time.time() - (timeout_time - timeout), timeout
+            #         )
+            #     )
+
+            wait(
+                condition=self.is_active,
+                timeout=timeout,
+                log=self.log,
+                reason="Waiting for subscription",
+            )
 
         return self.is_active()
 
     def activate(self):
-        self.log.info(f"Activating subscription")
+        self.log.info(f"Activating subscription '{self=}'")
         paho_client = self.userdata.client.get_paho()
 
         self._rc, self._mid = paho_client.subscribe(self.topic, self.qos)
 
+        self.log.debug(
+            f"Subscription result: '{self._rc=}', '{self._rc=}', '{self._mid=}'"
+        )
         return self._rc == PahoClient.MQTT_ERR_SUCCESS
 
     def deactivate(self, rc):

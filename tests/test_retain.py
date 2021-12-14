@@ -84,12 +84,12 @@ def test_retain_delete(caplog, client):
 
     ###
     # Delete and verify
-    subscription.wait_for_active(1)
+    subscription.wait_for_active(2)
 
     pub_message = client.publish(topic=topic, payload=None, retain=True)
     pub_message.wait_for_communication()
 
-    subscription.wait_for_message(1)
+    subscription.wait_for_message(2)
 
     sub_message = subscription.messages[-1]
     sub_message_count = subscription.total_message_count

@@ -2,12 +2,11 @@
 .ONESHELL:
 
 # define the name of the virtual environment directory
-VENV := .venv
+VENV := ".venv"
 
 # Container info used during testing
-CONTAINER_NAME := emqx_for_testing
-CONTAINER_IMAGE := emqx/emqx
-
+CONTAINER_NAME := "emqx_for_testing"
+CONTAINER_IMAGE := "emqx/emqx:4.3.7"
 # default target, when make executed without arguments
 .PHONY: all
 all: venv
@@ -28,21 +27,23 @@ install: build
 
 .PHONY: clean
 clean:
-	python setup.py clean
+	make stop-broker;
+
+	python setup.py clean;
 	rm -rf -- $(VENV);
-	rm -rf -- ./build ./dist ./.eggs ./.pytest_cache
+	rm -rf -- ./build ./dist ./.eggs ./.pytest_cache;
 	find . -type f -name '*.pyc' -delete;
 	find . -type d -name '__pycache__' -delete;
 	find . -type d -name '*.egg-info' -execdir rm -rf -- '{}' \; ;
 
-	make stop-broker;
+	
 
 .PHONY: start-broker
 start-broker:
 	@echo "Starting broker"
 	
 	if [ "$$(docker container inspect -f '{{.State.Status}}' $(CONTAINER_NAME) )" != "running" ]; then \
-		docker run --rm --name $(CONTAINER_NAME) -d -p1883:1883 -p8883:8883 -p8083:8083 -p8084:8084 $(CONTAINER_IMAGE); \
+		docker run --rm --name $(CONTAINER_NAME) -d -e EMQX_LOG__LEVEL=debug -p1883:1883 -p8883:8883 -p8083:8083 -p8084:8084 $(CONTAINER_IMAGE); \
 	else \
 		echo "Already running"; \
 	fi

@@ -3,19 +3,32 @@ import random
 import string
 from typing import Tuple
 from dataclasses import dataclass, field
+import ssl
 
 import paho.mqtt.client as PahoClient
 from .mqtt_userdata import MqttUserdata
 
+# Help out with cyclic import
+from typing import TYPE_CHECKING, List
+
+if TYPE_CHECKING:
+    from .mqtt_client import MqttClient
+
 
 def map_to_paho_protocol(protocol: str) -> int:
     protocol_map = {
-        "3.1.0": {"ids": ["3", "3.1.0", "MQTTv3"], "paho_value": PahoClient.MQTTv31},
+        "3.1.0": {
+            "ids": [PahoClient.MQTTv31, "3", "3.1.0", "MQTTv3"],
+            "paho_value": PahoClient.MQTTv31,
+        },
         "3.1.1": {
-            "ids": ["4", "3.1.1", "MQTTv311", "MQTTv4"],
+            "ids": [PahoClient.MQTTv311, "4", "3.1.1", "MQTTv311", "MQTTv4"],
             "paho_value": PahoClient.MQTTv311,
         },
-        "5.0.0": {"ids": ["5", "5.0.0", "MQTTv5"], "paho_value": PahoClient.MQTTv5},
+        "5.0.0": {
+            "ids": [PahoClient.MQTTv5, "5", "5.0.0", "MQTTv5"],
+            "paho_value": PahoClient.MQTTv5,
+        },
     }
 
     for protocol_info in protocol_map.values():
@@ -43,15 +56,16 @@ class MqttConfig:
             the version of the MQTT protocol to use for this client. Can be either MQTTv31, MQTTv311 or MQTTv5
         client_id
             the unique client id string used when connecting to the broker. If client_id is zero length or None, then one will be randomly generated. In this case the clean_session parameter must be True.
-
-    tls: dict = None
-
         clean_session
             a boolean that determines the client type. If True, the broker will remove all information about this client when it disconnects. If False, the client is a durable client and subscription information and queued messages will be retained when the client disconnects.
             Note that a client will never discard its own outgoing messages on disconnect. Calling connect() or reconnect() will cause the messages to be resent. Use reinitialise() to reset a client to its original state.
 
     keepalive: int = 60
     bind_address: str = ""
+
+    tls_enable: bool = False
+    tls_insecure: bool = False
+
     log: logging.Logger = logging.getLogger("Config.INITIALIZING")
     save_sent_messages: bool = False
 
@@ -61,6 +75,7 @@ class MqttConfig:
 
     host: str
     port: int
+
     username: str = None
     password: str = None
     transport: str = "tcp"
@@ -71,13 +86,24 @@ class MqttConfig:
     client_id: str = None
     _client_id: str = field(init=False, repr=False)
 
-    tls: dict = None
+    tls_enable: bool = False
+    tls_insecure: bool = False
+
     clean_session: bool = True
     keepalive: int = 60
     bind_address: str = ""
 
+    tls_enable: bool = False
+    tls_insecure: bool = False
+
     log: logging.Logger = logging.getLogger("Config.INITIALIZING")
     save_sent_messages: bool = False
+
+    __paho_need_reinitialize: bool = True
+    __paho_need_reinitialize_slots: str = "protocol transport client_id clean_session"
+
+    __paho_need_reconnect: bool = True
+    __paho_need_reconnect_slots: str = "host port keepalive bind_address"
 
     def __post_init__(self):
         if self.client_id == None:
@@ -89,6 +115,15 @@ class MqttConfig:
             )
 
         self.log.name = "Config.{}".format(self.client_id)
+
+        if (
+            map_to_paho_protocol(self.protocol) == PahoClient.MQTTv5
+            and self.clean_session
+        ):
+            self.log.warning(
+                f"MQTTv5 does not use clean_session config, changing to None"
+            )
+            self.clean_session = None
 
     @property
     def client_id(self) -> str:
@@ -133,56 +168,66 @@ class MqttConfig:
         if map_to_paho_protocol(protocol):
             self._protocol = protocol
 
-    def phao_config_client(self) -> Tuple[list, dict]:
-        return (
-            [],
-            {
-                "client_id": self.client_id,
-                "clean_session": self.clean_session,
-                "protocol": map_to_paho_protocol(self.protocol),
-                "transport": self.transport,
-            },
-        )
+    # Wrapper around private member
+    @property
+    def _paho_need_reinitialize(self) -> bool:
+        return self.__paho_need_reinitialize
 
-    def paho_config_connect(self) -> Tuple[list, dict]:
-        return (
-            [
-                self.host,
-            ],
-            {
-                "port": self.port,
-                "keepalive": self.keepalive,
-                "bind_address": self.bind_address,
-            },
-        )
+    def _phao_initialize(self, client: "MqttClient") -> bool:
+        if self._paho_need_reinitialize:
+            self.log.debug("Initializing paho")
 
-@dataclass
-class MqttTls:
-    
-    ca_certs
-        a string path to the Certificate Authority certificate files that are to be treated as trusted by this client. If this is the only option given then the client will operate in a similar manner to a web browser. That is to say it will require the broker to have a certificate signed by the Certificate Authorities in ca_certs and will communicate using TLS v1.2, but will not attempt any form of authentication. This provides basic network encryption but may not be sufficient depending on how the broker is configured. By default, on Python 2.7.9+ or 3.4+, the default certification authority of the system is used. On older Python version this parameter is mandatory.
-    certfile, keyfile
-        strings pointing to the PEM encoded client certificate and private keys respectively. If these arguments are not None then they will be used as client information for TLS based authentication. Support for this feature is broker dependent. Note that if either of these files in encrypted and needs a password to decrypt it, Python will ask for the password at the command line. It is not currently possible to define a callback to provide the password.
-    cert_reqs
-        defines the certificate requirements that the client imposes on the broker. By default this is ssl.CERT_REQUIRED, which means that the broker must provide a certificate. See the ssl pydoc for more information on this parameter.
-    tls_version
-        specifies the version of the SSL/TLS protocol to be used. By default (if the python version supports it) the highest TLS version is detected. If unavailable, TLS v1.2 is used. Previous versions (all versions beginning with SSL) are possible but not recommended due to possible security problems.
-    ciphers
-        a string specifying which encryption ciphers are allowable for this connection, or None to use the defaults. See the ssl pydoc for more information.
+            paho_client = PahoClient.Client(
+                protocol=map_to_paho_protocol(self.protocol),
+                transport=self.transport,
+                client_id=self.client_id,
+                clean_session=self.clean_session,
+            )
 
-    Must be called before connect*().
-    tls_set_context()
+            self.__paho_need_reinitialize = False
 
-    tls_set_context(context=None)
+        else:
+            paho_client = client._paho_client
 
-    Configure network encryption and authentication context. Enables SSL/TLS support.
+        paho_client.user_data_set(client.userdata)
 
-    context
-        an ssl.SSLContext object. By default, this is given by ssl.create_default_context(), if available (added in Python 3.4).
+        if self.tls_enable:
+            self.log.info(f"Enabling TLS")
+            if not self.tls_insecure:
+                # tls_set(ca_certs=None, certfile=None, keyfile=None, cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLS, ciphers=None)
+                paho_client.tls_set(cert_reqs=ssl.CERT_REQUIRED)
+                # tls_set_context(context=None)
 
-    If you’re unsure about using this method, then either use the default context, or use the tls_set method. See the ssl module documentation section about security considerations for more information.
+            elif self.tls_insecure:
+                self.log.warning(f"Disabling TLS cert verification")
+                paho_client.tls_set(cert_reqs=ssl.CERT_NONE)
+                paho_client.tls_insecure_set(self.tls_insecure)
 
-    Must be called before connect*().
-    tls_insecure_set()
+        if self.transport == "websockets":
+            self.log.debug("Setting websockets")
+            # paho_client.ws_set_options(path="/mqtt", headers=None)
 
-    tls_insecure_set(value)
+        client._paho_client = paho_client
+
+    # Wrapper around private member
+    @property
+    def _phao_need_reconnect(self) -> bool:
+        return self.__paho_need_reconnect
+
+    def _paho_config(self, client: "MqttClient") -> bool:
+        self.log.debug("Configuring paho")
+
+        if self._paho_need_reinitialize:
+            self._phao_inititialize(client)
+
+        paho_client = client._paho_client
+
+        self.log.debug(f"Paho client: {paho_client}")
+
+        if self._phao_need_reconnect:
+            paho_client.connect(
+                host=self.host,
+                port=self.port,
+                keepalive=self.keepalive,
+                bind_address=self.bind_address,
+            )
