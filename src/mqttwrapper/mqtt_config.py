@@ -224,6 +224,9 @@ class MqttConfig:
 
         self.log.debug(f"Paho client: {paho_client}")
 
+        if self.username:
+            paho_client.username_pw_set(username=self.username, password=self.password)
+
         if self._phao_need_reconnect:
             paho_client.connect(
                 host=self.host,

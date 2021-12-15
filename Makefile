@@ -7,6 +7,9 @@ VENV := ".venv"
 # Container info used during testing
 CONTAINER_NAME := "emqx_for_testing"
 CONTAINER_IMAGE := "emqx/emqx:4.3.7"
+MQTT_USERNAME := "admin"
+MQTT_PASSWORD := "testing"
+
 # default target, when make executed without arguments
 .PHONY: all
 all: venv
@@ -43,7 +46,15 @@ start-broker:
 	@echo "Starting broker"
 	
 	if [ "$$(docker container inspect -f '{{.State.Status}}' $(CONTAINER_NAME) )" != "running" ]; then \
-		docker run --rm --name $(CONTAINER_NAME) -d -e EMQX_LOG__LEVEL=debug -p1883:1883 -p8883:8883 -p8083:8083 -p8084:8084 $(CONTAINER_IMAGE); \
+		docker run --rm --name $(CONTAINER_NAME) -d \
+			-e EMQX_LOG__LEVEL=debug \
+			-e EMQX_LOADED_PLUGINS="emqx_dashboard,emqx_management,emqx_recon,emqx_retainer,emqx_rule_engine,emqx_telemetry,emqx_auth_mnesia" \
+			-e EMQX_ALLOW_ANONYMOUS=false \
+			-e EMQX_ACL_NOMATCH=deny \
+			-e EMQX_AUTH__USER__1__USERNAME=$(MQTT_USERNAME) \
+			-e EMQX_AUTH__USER__1__PASSWORD=$(MQTT_PASSWORD) \
+			-p1883:1883 -p8883:8883 -p8083:8083 -p8084:8084 \
+			$(CONTAINER_IMAGE); \
 	else \
 		echo "Already running"; \
 	fi
@@ -56,8 +67,12 @@ stop-broker:
 
 .PHONY: run-test
 run-test:
-	python setup.py pytest;
+	python setup.py pytest --addopts "--username=$(MQTT_USERNAME) --password=$(MQTT_PASSWORD)";
 
 .PHONY: test
 test: install start-broker run-test stop-broker
+
+.PHONY: test-loop
+test-loop:
+	(run=0; while make test; do run=$$(expr $$run + 1); clear; echo "Completed $$run test runs"; sleep 10; done)
 
