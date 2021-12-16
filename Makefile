@@ -72,6 +72,7 @@ run-test:
 .PHONY: test
 test: install start-broker run-test stop-broker
 
+# The loop is mostly to test for race conditions due to network latency etc, it will continue to run until a test fails.
 .PHONY: test-loop
 test-loop:
 	(run=0; while make test; do run=$$(expr $$run + 1); clear; echo "Completed $$run test runs"; sleep 10; done)
